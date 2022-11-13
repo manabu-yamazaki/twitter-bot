@@ -1,26 +1,28 @@
 import random
-import re
+# import re
 import time
 from datetime import datetime, timezone
 from enum import Enum
+import os
 
+import boto3
 import gspread
-import pandas
-import pytz
+# import pandas
+# import pytz
 import tweepy
 from oauth2client.service_account import ServiceAccountCredentials
 
 from user_settings import (
     SPREADSHEET_NAME,
-    TWITTER_ACCESS_TOKEN,
-    TWITTER_ACCESS_TOKEN_SECRET,
-    TWITTER_API_KEY,
-    TWITTER_API_KEY_SECRET,
     TWITTER_ORDER,
+    SLEEP_MAX_TIME,
 )
 
-# CSVファイル名
-FILE_NAME = "tw_data.csv"
+AWS_IMAGE_BUCKET = "myzk"
+TEMP_IMAGE_PASS = "/tmp/temp.png"
+
+# # CSVファイル名
+# FILE_NAME = "tw_data.csv"
 # スプレッドシートインデックス
 class SheetIndex(Enum):
     START_ROW = 2
@@ -29,57 +31,50 @@ class SheetIndex(Enum):
     ONETIME = 3
 
 
-# 取り出したデータをpandasのDataFrameに変換
-# CSVファイルに出力するときの列の名前を定義
-LABELS = [
-    "ツイートID",
-    "ツイート時刻",
-    "ツイート本文",
-    "いいね数",
-    "リツイート数",
-    "ID",
-    "ユーザー名",
-    "アカウント名",
-    "自己紹介文",
-    "フォロー数",
-    "フォロワー数",
-    "アカウント作成日時",
-    "自分のフォロー状況",
-    "アイコン画像URL",
-    "ヘッダー画像URL",
-    "WEBサイト",
-]
+# # 取り出したデータをpandasのDataFrameに変換
+# # CSVファイルに出力するときの列の名前を定義
+# LABELS = [
+#     "ツイートID",
+#     "ツイート時刻",
+#     "ツイート本文",
+#     "いいね数",
+#     "リツイート数",
+#     "ID",
+#     "ユーザー名",
+#     "アカウント名",
+#     "自己紹介文",
+#     "フォロー数",
+#     "フォロワー数",
+#     "アカウント作成日時",
+#     "自分のフォロー状況",
+#     "アイコン画像URL",
+#     "ヘッダー画像URL",
+#     "WEBサイト",
+# ]
 
 
-def sleep_random():
-    sleep_time = random.randint(1, 300)
-    print("Random Sleep")
-    print(sleep_time)
-    time.sleep(sleep_time)
+# """
+# 概　要：UTCをJSTに変換する
+# 引　数：u_time:日付
+# 返り値：日本時間
+# """
 
 
-"""
-概　要：UTCをJSTに変換する
-引　数：u_time:日付
-返り値：日本時間
-"""
-
-
-def change_time_JST(u_time):
-    # イギリスのtimezoneを設定するために再定義する
-    utc_time = datetime(
-        u_time.year,
-        u_time.month,
-        u_time.day,
-        u_time.hour,
-        u_time.minute,
-        u_time.second,
-        tzinfo=timezone.utc,
-    )
-    # タイムゾーンを日本時刻に変換
-    jst_time = utc_time.astimezone(pytz.timezone("Asia/Tokyo"))
-    # 文字列で返す
-    return jst_time.strftime("%Y-%m-%d_%H:%M:%S")
+# def change_time_JST(u_time):
+#     # イギリスのtimezoneを設定するために再定義する
+#     utc_time = datetime(
+#         u_time.year,
+#         u_time.month,
+#         u_time.day,
+#         u_time.hour,
+#         u_time.minute,
+#         u_time.second,
+#         tzinfo=timezone.utc,
+#     )
+#     # タイムゾーンを日本時刻に変換
+#     jst_time = utc_time.astimezone(pytz.timezone("Asia/Tokyo"))
+#     # 文字列で返す
+#     return jst_time.strftime("%Y-%m-%d_%H:%M:%S")
 
 
 """
@@ -110,11 +105,10 @@ def init_google_tools():
 
 def twitter_oauth():
     # Twitterの認証
-    auth = tweepy.OAuthHandler(TWITTER_API_KEY, TWITTER_API_KEY_SECRET)
-    auth.set_access_token(TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_TOKEN_SECRET)
-    # api = tweepy.API(auth)
+    auth = tweepy.OAuthHandler(os.environ['TWITTER_API_KEY'], os.environ['TWITTER_API_KEY_SECRET'])
+    auth.set_access_token(os.environ['TWITTER_ACCESS_TOKEN'], os.environ['TWITTER_ACCESS_TOKEN_SECRET'])
 
-    # 　”wait_on_rate_limit = True”　利用制限にひっかかた時に必要時間待機する
+    # ”wait_on_rate_limit = True” 利用制限にひっかかた時に必要時間待機する
     return tweepy.API(auth, wait_on_rate_limit=True)
 
 
@@ -137,45 +131,69 @@ def get_tweets(api, search_word="***** min_faves:200", getting_count=1):
     ).items(getting_count)
 
 
+# """
+# 概　要：ツイート情報をCSV出力
+# 引　数：tweets:ツイートリスト
+# 返り値：なし
+# """
+
+
+# def output_csv(tweets):
+#     # 取得したツイートを一つずつ取り出して必要な情報をtweet_dataに格納する
+#     tw_data = []
+
+#     for tweet in tweets:
+#         # ツイート時刻とユーザのアカウント作成時刻を日本時刻にする
+#         tweet_time = change_time_JST(tweet.created_at)
+#         create_account_time = change_time_JST(tweet.user.created_at)
+#         # tweet_dataの配列に取得したい情報を入れていく
+#         tw_data.append(
+#             [
+#                 tweet.id,
+#                 tweet_time,
+#                 tweet.full_text,
+#                 tweet.favorite_count,
+#                 tweet.retweet_count,
+#                 tweet.user.id,
+#                 tweet.user.screen_name,
+#                 tweet.user.name,
+#                 tweet.user.description,
+#                 tweet.user.friends_count,
+#                 tweet.user.followers_count,
+#                 create_account_time,
+#                 tweet.user.following,
+#                 tweet.user.profile_image_url,
+#                 tweet.user.profile_background_image_url,
+#                 tweet.user.url,
+#             ]
+#         )
+
+#     # tw_dataのリストをpandasのDataFrameに変換して、CSVファイルを出力する
+#     pandas.DataFrame(tw_data, columns=LABELS).to_csv(FILE_NAME, encoding="utf-8-sig", index=False)
+
 """
-概　要：ツイート情報をCSV出力
-引　数：tweets:ツイートリスト
-返り値：なし
+概　要：スプレッドシートから1回分のツイート情報を取得する
+引　数：sheet:ツイート情報が記載されているシート
+返り値：target_row: 対称行番号, message:メッセージ, image_pass:AWS S3バケットのイメージパス
 """
 
+def get_tweet_info(sheet):
+    max_row = len(list(filter(None, sheet.col_values(SheetIndex.MESSAGE.value))))
+    target_row = (
+        SheetIndex.START_ROW.value
+        if TWITTER_ORDER == 1
+        else random.randint(SheetIndex.START_ROW.value, max_row)
+    )
+    message = sheet.cell(target_row, SheetIndex.MESSAGE.value).value
+    image_pass = sheet.cell(target_row, SheetIndex.IMAGE.value).value
 
-def output_csv(tweets):
-    # 取得したツイートを一つずつ取り出して必要な情報をtweet_dataに格納する
-    tw_data = []
-
-    for tweet in tweets:
-        # ツイート時刻とユーザのアカウント作成時刻を日本時刻にする
-        tweet_time = change_time_JST(tweet.created_at)
-        create_account_time = change_time_JST(tweet.user.created_at)
-        # tweet_dataの配列に取得したい情報を入れていく
-        tw_data.append(
-            [
-                tweet.id,
-                tweet_time,
-                tweet.full_text,
-                tweet.favorite_count,
-                tweet.retweet_count,
-                tweet.user.id,
-                tweet.user.screen_name,
-                tweet.user.name,
-                tweet.user.description,
-                tweet.user.friends_count,
-                tweet.user.followers_count,
-                create_account_time,
-                tweet.user.following,
-                tweet.user.profile_image_url,
-                tweet.user.profile_background_image_url,
-                tweet.user.url,
-            ]
-        )
-
-    # tw_dataのリストをpandasのDataFrameに変換して、CSVファイルを出力する
-    pandas.DataFrame(tw_data, columns=LABELS).to_csv(FILE_NAME, encoding="utf-8-sig", index=False)
+    if image_pass != None:
+        s3 = boto3.resource('s3')
+        bucket = s3.Bucket(AWS_IMAGE_BUCKET)
+        bucket.download_file('image/' + image_pass, TEMP_IMAGE_PASS)
+        print("Tweet Image Get")
+    
+    return target_row, message, image_pass
 
 
 """
@@ -186,21 +204,13 @@ def output_csv(tweets):
 
 
 def start(event, context):
+
     # スプレッドシート読み込み&Googleドライブ準備
     sheet1, sheet2 = init_google_tools()
     print("Google Tools Authorized")
 
-    max_row = len(list(filter(None, sheet1.col_values(SheetIndex.MESSAGE.value))))
-    target_row = (
-        SheetIndex.START_ROW.value
-        if TWITTER_ORDER == 1
-        else random.randint(SheetIndex.START_ROW.value, max_row)
-    )
-    message = sheet1.cell(target_row, SheetIndex.MESSAGE.value).value
-    image_pass = sheet1.cell(target_row, SheetIndex.IMAGE.value).value
-
-    # スプレッドシートからツイート情報を取得
-    # name_list = get_name_list(sheet1)
+    # スプレッドシートから1回分のツイート情報を取得
+    target_row, message, image_pass = get_tweet_info(sheet1)
     print("Tweet Info Get")
 
     # Twitter認証
@@ -209,12 +219,14 @@ def start(event, context):
 
     # ランダム時間待機
     print("Random Sleep")
-    time.sleep(random.randint(1, 600))
+    time.sleep(random.randint(1, SLEEP_MAX_TIME))
 
-    # ツイートを投稿
-    twitter_api.update_status(message)
-    # # 画像付きツイート
-    # twitter_api.update_with_media(status = "hello tweepy with media", filename = 'hoge.jpg')
+    if image_pass != None:
+        # 画像付きツイート
+        twitter_api.update_status_with_media(message, TEMP_IMAGE_PASS)
+    else:
+        # ツイートを投稿
+        twitter_api.update_status(message)
     print("Twitter Update")
 
     # 1回限りのメッセージの場合、別シートに移動する
@@ -230,45 +242,36 @@ def start(event, context):
 
 
 def test():
+
     # スプレッドシート読み込み&Googleドライブ準備
     sheet1, sheet2 = init_google_tools()
     print("Google Tools Authorized")
 
-    max_row = len(list(filter(None, sheet1.col_values(SheetIndex.MESSAGE.value))))
-    print(f"max row: {max_row}")
-    target_row = (
-        SheetIndex.START_ROW.value
-        if TWITTER_ORDER == 1
-        else random.randint(SheetIndex.START_ROW.value, max_row)
-    )
-    print(f"target row: {target_row}")
-    message = sheet1.cell(target_row, SheetIndex.MESSAGE.value).value
-    print(f"message: {message}")
-    image_pass = sheet1.cell(target_row, SheetIndex.IMAGE.value).value
-    print(f"image: {image_pass}")
-
-    # # スプレッドシートからツイート情報を取得
-    # # name_list = get_name_list(sheet1)
-    # print("Tweet Info Get")
+    # スプレッドシートから1回分のツイート情報を取得
+    target_row, message, image_pass = get_tweet_info(sheet1)
+    print("Tweet Info Get")
 
     # Twitter認証
     twitter_api = twitter_oauth()
     print("Twitter Authorized")
 
     # ランダム時間待機
-    time.sleep(random.randint(1, 600))
+    print("Random Sleep")
+    time.sleep(random.randint(1, SLEEP_MAX_TIME))
 
-    # # ツイートを投稿
-    twitter_api.update_status(message)
-    # # 画像付きツイート
-    # twitter_api.update_with_media(status = "hello tweepy with media", filename = 'hoge.jpg')
-    # print("Twitter Update")
+    if image_pass != None:
+        # 画像付きツイート
+        twitter_api.update_status_with_media(message, TEMP_IMAGE_PASS)
+    else:
+        # ツイートを投稿
+        twitter_api.update_status(message)
+    print("Twitter Update")
 
-    add_row = len(list(filter(None, sheet2.col_values(SheetIndex.MESSAGE.value)))) + 1
-    sheet2.update_cell(add_row, SheetIndex.MESSAGE.value, message)
-    sheet2.update_cell(add_row, SheetIndex.IMAGE.value, image_pass)
-    sheet1.delete_row(target_row)
+    # 1回限りのメッセージの場合、別シートに移動する
+    if sheet1.cell(target_row, SheetIndex.IMAGE.value).value == 'Yes':
+        add_row = len(list(filter(None, sheet2.col_values(SheetIndex.MESSAGE.value)))) + 1
+        sheet2.update_cell(add_row, SheetIndex.MESSAGE.value, message)
+        sheet2.update_cell(add_row, SheetIndex.IMAGE.value, image_pass)
+        sheet1.delete_row(target_row)
 
-    # print("COMPLETE !")
-
-    # return ''
+    print("COMPLETE !")

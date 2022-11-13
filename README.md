@@ -21,6 +21,7 @@ pip install gspread oauth2client -t .
 pip install tweepy -t .
 pip install pandas -t .
 pip install pytz -t .
+pip install boto3 -t 。
 
 ### AWS Lambda 定期実行用
 
@@ -28,6 +29,7 @@ pip install gspread oauth2client -t python/lib/python3.7/site-packages
 pip install tweepy -t python/lib/python3.7/site-packages
 pip install pandas -t python/lib/python3.7/site-packages
 pip install pytz -t python/lib/python3.7/site-packages
+pip install boto3 -t python/lib/python3.7/site-packages
 
 ## スプレッドシートを操作するための認証
 
@@ -41,6 +43,23 @@ https://developer.twitter.com/en/apps/
 ## Twitter API サードパーティアプリの承認
 
 https://tools.tsukumijima.net/twittertoken-viewer/
+
+## 環境変数設定(ローカル)
+
+export AWS_ACCESS_KEY_ID=xxxxxx
+export AWS_SECRET_ACCESS_KEY=xxxxxx
+export TWITTER_API_KEY=xxxxxx
+export TWITTER_API_KEY_SECRET=xxxxxx
+export TWITTER_ACCESS_TOKEN=xxxxxx
+export TWITTER_ACCESS_TOKEN_SECRET=xxxxxx
+
+環境変数確認コマンド
+printenv
+
+## Amazon S3 バケットのアクセス許可
+
+ブロックパブリックアクセスを一部許可してから、バケットポリシーを編集する。
+https://s3.console.aws.amazon.com/s3/buckets/myzk?region=ap-northeast-1&tab=permissions
 
 ##
 
