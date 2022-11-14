@@ -1,21 +1,26 @@
+import os
 import random
+
 # import re
 import time
-from datetime import datetime, timezone
+# from datetime import datetime, timezone
 from enum import Enum
-import os
 
 import boto3
 import gspread
+
 # import pandas
 # import pytz
 import tweepy
 from oauth2client.service_account import ServiceAccountCredentials
 
 from user_settings import (
+    FAVORITE_TIME,
+    SLEEP_MAX_TIME_LIKE,
+    SLEEP_MAX_TIME_TWEET,
     SPREADSHEET_NAME,
+    TWEET_MIN_FAVES,
     TWITTER_ORDER,
-    SLEEP_MAX_TIME,
 )
 
 AWS_IMAGE_BUCKET = "myzk"
@@ -29,6 +34,7 @@ class SheetIndex(Enum):
     MESSAGE = 1
     IMAGE = 2
     ONETIME = 3
+    SEARCH_WORD = 1
 
 
 # # 取り出したデータをpandasのDataFrameに変換
@@ -91,8 +97,9 @@ def init_google_tools():
     )
     client = gspread.authorize(credentials_info)
     return (
-        client.open(SPREADSHEET_NAME).worksheet("シート1"),
-        client.open(SPREADSHEET_NAME).worksheet("シート2"),
+        client.open(SPREADSHEET_NAME).worksheet("ツイートリスト"),
+        client.open(SPREADSHEET_NAME).worksheet("ツイート済"),
+        client.open(SPREADSHEET_NAME).worksheet("検索ワード"),
     )
 
 
@@ -105,8 +112,10 @@ def init_google_tools():
 
 def twitter_oauth():
     # Twitterの認証
-    auth = tweepy.OAuthHandler(os.environ['TWITTER_API_KEY'], os.environ['TWITTER_API_KEY_SECRET'])
-    auth.set_access_token(os.environ['TWITTER_ACCESS_TOKEN'], os.environ['TWITTER_ACCESS_TOKEN_SECRET'])
+    auth = tweepy.OAuthHandler(os.environ["TWITTER_API_KEY"], os.environ["TWITTER_API_KEY_SECRET"])
+    auth.set_access_token(
+        os.environ["TWITTER_ACCESS_TOKEN"], os.environ["TWITTER_ACCESS_TOKEN_SECRET"]
+    )
 
     # ”wait_on_rate_limit = True” 利用制限にひっかかた時に必要時間待機する
     return tweepy.API(auth, wait_on_rate_limit=True)
@@ -114,12 +123,12 @@ def twitter_oauth():
 
 """
 概　要：複数ツイート取得
-引　数：api:TwitterAPIインスタンス, search_word:検索条件の設定, getting_count:取得件数
+twitter_api:TwitterAPIインスタンス, search_word:検索条件の設定, getting_count:取得件数
 返り値：ツイートリスト
 """
 
 
-def get_tweets(api, search_word="***** min_faves:200", getting_count=1):
+def get_tweets(twitter_api, search_word="***** min_faves:200", getting_count=1):
     # 検索条件の設定
     # min_favesはいいねの件数が最低200件以上のツイートのみを取得する.変更可能
     # *****に検索キーワードを入力する
@@ -127,8 +136,33 @@ def get_tweets(api, search_word="***** min_faves:200", getting_count=1):
 
     # 検索条件を元にツイートを抽出
     return tweepy.Cursor(
-        api.search_tweets, q=search_word, tweet_mode="extended", result_type="mixed", lang="ja"
+        twitter_api.search_tweets,
+        q=search_word,
+        tweet_mode="extended",
+        result_type="mixed",
+        lang="ja",
     ).items(getting_count)
+
+
+"""
+概　要：スプレッドシートの検索ワードを基にツイートを検索し、いいね&フォローする
+引　数：api:TwitterAPIインスタンス, search_word:検索条件の設定
+返り値：なし
+"""
+
+
+def search_tweets_and_method(twitter_api, search_word):
+    for tweet in get_tweets(
+        twitter_api, f"{search_word} min_faves:{TWEET_MIN_FAVES}", FAVORITE_TIME,
+    ):
+        # 未いいねの場合はいいねする
+        if twitter_api.get_status(tweet.id).favorited:
+            time.sleep(random.randint(1, SLEEP_MAX_TIME_LIKE))
+            twitter_api.create_favorite(tweet.id)
+        # 未フォローの場合はフォローする
+        if tweet.user._json["screen_name"] not in twitter_api.friends:
+            twitter_api.create_friendship(tweet.user._json["screen_name"])
+            print(f'{tweet.user._json["screen_name"]} followed')
 
 
 # """
@@ -177,6 +211,7 @@ def get_tweets(api, search_word="***** min_faves:200", getting_count=1):
 返り値：target_row: 対称行番号, message:メッセージ, image_pass:AWS S3バケットのイメージパス
 """
 
+
 def get_tweet_info(sheet):
     max_row = len(list(filter(None, sheet.col_values(SheetIndex.MESSAGE.value))))
     target_row = (
@@ -187,12 +222,13 @@ def get_tweet_info(sheet):
     message = sheet.cell(target_row, SheetIndex.MESSAGE.value).value
     image_pass = sheet.cell(target_row, SheetIndex.IMAGE.value).value
 
+    # 画像がある場合は作業用にダウンロードする
     if image_pass != None:
-        s3 = boto3.resource('s3')
+        s3 = boto3.resource("s3")
         bucket = s3.Bucket(AWS_IMAGE_BUCKET)
-        bucket.download_file('image/' + image_pass, TEMP_IMAGE_PASS)
+        bucket.download_file("image/" + image_pass, TEMP_IMAGE_PASS)
         print("Tweet Image Get")
-    
+
     return target_row, message, image_pass
 
 
@@ -206,11 +242,11 @@ def get_tweet_info(sheet):
 def start(event, context):
 
     # スプレッドシート読み込み&Googleドライブ準備
-    sheet1, sheet2 = init_google_tools()
+    tweets_sheet, tweeted_sheet, search_word_sheet = init_google_tools()
     print("Google Tools Authorized")
 
     # スプレッドシートから1回分のツイート情報を取得
-    target_row, message, image_pass = get_tweet_info(sheet1)
+    target_row, message, image_pass = get_tweet_info(tweets_sheet)
     print("Tweet Info Get")
 
     # Twitter認証
@@ -219,7 +255,7 @@ def start(event, context):
 
     # ランダム時間待機
     print("Random Sleep")
-    time.sleep(random.randint(1, SLEEP_MAX_TIME))
+    time.sleep(random.randint(1, SLEEP_MAX_TIME_LIKE))
 
     if image_pass != None:
         # 画像付きツイート
@@ -230,11 +266,20 @@ def start(event, context):
     print("Twitter Update")
 
     # 1回限りのメッセージの場合、別シートに移動する
-    if sheet1.cell(target_row, SheetIndex.IMAGE.value).value == 'Yes':
-        add_row = len(list(filter(None, sheet2.col_values(SheetIndex.MESSAGE.value)))) + 1
-        sheet2.update_cell(add_row, SheetIndex.MESSAGE.value, message)
-        sheet2.update_cell(add_row, SheetIndex.IMAGE.value, image_pass)
-        sheet1.delete_row(target_row)
+    if tweets_sheet.cell(target_row, SheetIndex.IMAGE.value).value == "Yes":
+        add_row = len(list(filter(None, tweeted_sheet.col_values(SheetIndex.MESSAGE.value)))) + 1
+        tweeted_sheet.update_cell(add_row, SheetIndex.MESSAGE.value, message)
+        tweeted_sheet.update_cell(add_row, SheetIndex.IMAGE.value, image_pass)
+        tweets_sheet.delete_row(target_row)
+
+    # スプレッドシートの検索ワードを基にツイートを検索し、いいね&フォローする
+    for target_row in range(
+        SheetIndex.START_ROW.value,
+        len(list(filter(None, search_word_sheet.col_values(SheetIndex.MESSAGE.value)))),
+    ):
+        search_tweets_and_method(
+            twitter_api, search_word_sheet.cell(target_row, SheetIndex.SEARCH_WORD.value).value
+        )
 
     print("COMPLETE !")
 
@@ -244,11 +289,11 @@ def start(event, context):
 def test():
 
     # スプレッドシート読み込み&Googleドライブ準備
-    sheet1, sheet2 = init_google_tools()
+    tweets_sheet, tweeted_sheet, search_word_sheet = init_google_tools()
     print("Google Tools Authorized")
 
     # スプレッドシートから1回分のツイート情報を取得
-    target_row, message, image_pass = get_tweet_info(sheet1)
+    target_row, message, image_pass = get_tweet_info(tweets_sheet)
     print("Tweet Info Get")
 
     # Twitter認証
@@ -257,7 +302,7 @@ def test():
 
     # ランダム時間待機
     print("Random Sleep")
-    time.sleep(random.randint(1, SLEEP_MAX_TIME))
+    time.sleep(random.randint(1, SLEEP_MAX_TIME_TWEET))
 
     if image_pass != None:
         # 画像付きツイート
@@ -268,10 +313,19 @@ def test():
     print("Twitter Update")
 
     # 1回限りのメッセージの場合、別シートに移動する
-    if sheet1.cell(target_row, SheetIndex.IMAGE.value).value == 'Yes':
-        add_row = len(list(filter(None, sheet2.col_values(SheetIndex.MESSAGE.value)))) + 1
-        sheet2.update_cell(add_row, SheetIndex.MESSAGE.value, message)
-        sheet2.update_cell(add_row, SheetIndex.IMAGE.value, image_pass)
-        sheet1.delete_row(target_row)
+    if tweets_sheet.cell(target_row, SheetIndex.IMAGE.value).value == "Yes":
+        add_row = len(list(filter(None, tweeted_sheet.col_values(SheetIndex.MESSAGE.value)))) + 1
+        tweeted_sheet.update_cell(add_row, SheetIndex.MESSAGE.value, message)
+        tweeted_sheet.update_cell(add_row, SheetIndex.IMAGE.value, image_pass)
+        tweets_sheet.delete_row(target_row)
+
+    # スプレッドシートの検索ワードを基にツイートを検索し、いいね&フォローする
+    for target_row in range(
+        SheetIndex.START_ROW.value,
+        len(list(filter(None, search_word_sheet.col_values(SheetIndex.MESSAGE.value)))),
+    ):
+        search_tweets_and_method(
+            twitter_api, search_word_sheet.cell(target_row, SheetIndex.SEARCH_WORD.value).value
+        )
 
     print("COMPLETE !")
