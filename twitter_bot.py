@@ -21,6 +21,7 @@ from user_settings import (
     SPREADSHEET_NAME,
     TWEET_MIN_FAVES,
     TWITTER_ORDER,
+    MY_ACCOUNT_ID,
 )
 
 AWS_IMAGE_BUCKET = "myzk"
@@ -156,12 +157,12 @@ def search_tweets_and_method(twitter_api, search_word):
         twitter_api, f"{search_word} min_faves:{TWEET_MIN_FAVES}", FAVORITE_TIME,
     ):
         # 未いいねの場合はいいねする
-        if twitter_api.get_status(tweet.id).favorited:
+        if not twitter_api.get_status(tweet.id).favorited:
             time.sleep(random.randint(1, SLEEP_MAX_TIME_LIKE))
             twitter_api.create_favorite(tweet.id)
         # 未フォローの場合はフォローする
-        if tweet.user._json["screen_name"] not in twitter_api.friends:
-            twitter_api.create_friendship(tweet.user._json["screen_name"])
+        if tweet.user._json["screen_name"] not in twitter_api.get_follower_ids(screen_name=MY_ACCOUNT_ID):
+            twitter_api.create_friendship(screen_name=tweet.user._json["screen_name"])
             print(f'{tweet.user._json["screen_name"]} followed')
 
 

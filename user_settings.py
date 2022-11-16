@@ -16,3 +16,6 @@ FAVORITE_TIME = 5
 
 # いいね◯件以上をいいねする
 TWEET_MIN_FAVES = "100"
+
+# アカウントID
+MY_ACCOUNT_ID = '@izakikakeru'
